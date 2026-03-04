@@ -35,7 +35,9 @@ export class ProcessTerminal implements TerminalLike {
 			this._onClose?.();
 		});
 
-		console.log(`[ProcessTerminal] Spawned claude process for ${name} (session: ${sessionId}, pid: ${this.process.pid})`);
+		if (this.process.pid) {
+			console.log(`[ProcessTerminal] Spawned claude process for ${name} (session: ${sessionId}, pid: ${this.process.pid})`);
+		}
 	}
 
 	/** Register a callback for when the process exits */

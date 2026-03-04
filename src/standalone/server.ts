@@ -9,7 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
 import * as crypto from 'crypto';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket as WsWebSocket } from 'ws';
 import type { WebSocket } from 'ws';
 import type { AgentState } from '../types.js';
 import type { MessageSender, PersistenceContext, StateStore, TerminalLike } from '../interfaces.js';
@@ -120,7 +120,7 @@ class WebSocketSender implements MessageSender {
 	postMessage(msg: unknown): void {
 		const data = JSON.stringify(msg);
 		for (const client of this.clients) {
-			if (client.readyState === 1 /* WebSocket.OPEN */) {
+			if (client.readyState === WsWebSocket.OPEN) {
 				client.send(data);
 			}
 		}
@@ -155,7 +155,6 @@ export class StandaloneServer {
 	private context: PersistenceContext;
 	private defaultLayout: Record<string, unknown> | null = null;
 	private layoutWatcher: LayoutWatcher | null = null;
-	private processTerminals = new Map<number, ProcessTerminal>();
 
 	constructor(
 		private port: number,
@@ -195,20 +194,22 @@ export class StandaloneServer {
 
 	start(): void {
 		this.httpServer.listen(this.port, () => {
-			console.log(`\n🎮 Pixel Agents standalone server running at http://localhost:${this.port}`);
-			console.log(`📁 Workspace: ${this.workspaceDir}`);
-			console.log(`📦 Assets: ${this.assetsRoot}`);
-			console.log(`\nOpen http://localhost:${this.port} in your browser to view the pixel office.\n`);
+			console.log([
+				'',
+				`🎮 Pixel Agents standalone server running at http://localhost:${this.port}`,
+				`📁 Workspace: ${this.workspaceDir}`,
+				`📦 Assets: ${this.assetsRoot}`,
+				'',
+				`Open http://localhost:${this.port} in your browser to view the pixel office.`,
+				'',
+			].join('\n'));
 		});
 	}
 
 	stop(): void {
 		// Clean up all agents
-		for (const [id] of this.agents) {
-			const pt = this.processTerminals.get(id);
-			if (pt) {
-				pt.dispose();
-			}
+		for (const [id, agent] of this.agents) {
+			agent.terminalRef.dispose();
 			removeAgent(
 				id, this.agents,
 				this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
@@ -302,9 +303,9 @@ export class StandaloneServer {
 			// In standalone mode, no terminal to focus — ignore
 		} else if (type === 'closeAgent') {
 			const agentId = message.id as number;
-			const pt = this.processTerminals.get(agentId);
-			if (pt) {
-				pt.dispose();
+			const agent = this.agents.get(agentId);
+			if (agent) {
+				agent.terminalRef.dispose();
 			}
 		} else if (type === 'saveAgentSeats') {
 			this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
@@ -417,13 +418,11 @@ export class StandaloneServer {
 			const sessionId = crypto.randomUUID();
 			const terminal = new ProcessTerminal(name, sessionId, cwd);
 
-			// Track the process terminal for lifecycle management
-			// We'll associate it with the agent ID after launchNewTerminal sets it up
+			// Register close handler — looks up agent by terminal identity (not ID)
+			// to avoid race conditions with agent ID assignment
 			terminal.onClose(() => {
-				// Find and remove the agent associated with this terminal
 				for (const [id, agent] of this.agents) {
 					if (agent.terminalRef === terminal) {
-						this.processTerminals.delete(id);
 						removeAgent(
 							id, this.agents,
 							this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
@@ -434,10 +433,6 @@ export class StandaloneServer {
 					}
 				}
 			});
-
-			// Store for cleanup — we'll update the mapping after launchNewTerminal
-			// Use nextAgentId.current as the upcoming agent ID
-			this.processTerminals.set(this.nextAgentId.current, terminal);
 
 			return { terminal: terminal as TerminalLike, sessionId };
 		};

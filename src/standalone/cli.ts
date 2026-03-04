@@ -11,6 +11,8 @@
 import { StandaloneServer } from './server.js';
 
 const DEFAULT_PORT = 3000;
+const MIN_PORT = 1;
+const MAX_PORT = 65535;
 
 function parseArgs(): { workspaceDir: string; port: number } {
 	const args = process.argv.slice(2);
@@ -20,7 +22,7 @@ function parseArgs(): { workspaceDir: string; port: number } {
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === '--port' && args[i + 1]) {
 			port = parseInt(args[i + 1], 10);
-			if (isNaN(port) || port < 1 || port > 65535) {
+			if (isNaN(port) || port < MIN_PORT || port > MAX_PORT) {
 				console.error(`Invalid port: ${args[i + 1]}`);
 				process.exit(1);
 			}
