@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { ExtensionContext } from 'vscode';
+import type { PersistenceContext } from './interfaces.js';
 import { LAYOUT_FILE_DIR, LAYOUT_FILE_NAME, LAYOUT_FILE_POLL_INTERVAL_MS, WORKSPACE_KEY_LAYOUT } from './constants.js';
 
 export interface LayoutWatcher {
@@ -49,7 +49,7 @@ export function writeLayoutToFile(layout: Record<string, unknown>): void {
  * 4. Else → return null
  */
 export function migrateAndLoadLayout(
-	context: ExtensionContext,
+	context: PersistenceContext,
 	defaultLayout?: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
 	// 1. Try file

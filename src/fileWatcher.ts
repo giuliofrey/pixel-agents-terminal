@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as vscode from 'vscode';
+import type { MessageSender, TerminalLike, ActiveTerminalProvider } from './interfaces.js';
 import type { AgentState } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
@@ -14,7 +14,7 @@ export function startFileWatching(
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 ): void {
 	// Primary: fs.watch (unreliable on macOS — may miss events)
 	try {
@@ -52,7 +52,7 @@ export function readNewLines(
 	agents: Map<number, AgentState>,
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 ): void {
 	const agent = agents.get(agentId);
 	if (!agent) return;
@@ -101,8 +101,9 @@ export function ensureProjectScan(
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 	persistAgents: () => void,
+	getActiveTerminal?: ActiveTerminalProvider,
 ): void {
 	if (projectScanTimerRef.current) return;
 	// Seed with all existing JSONL files so we only react to truly new ones
@@ -119,7 +120,7 @@ export function ensureProjectScan(
 		scanForNewJsonlFiles(
 			projectDir, knownJsonlFiles, activeAgentIdRef, nextAgentIdRef,
 			agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
-			webview, persistAgents,
+			webview, persistAgents, getActiveTerminal,
 		);
 	}, PROJECT_SCAN_INTERVAL_MS);
 }
@@ -134,8 +135,9 @@ function scanForNewJsonlFiles(
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 	persistAgents: () => void,
+	getActiveTerminal?: ActiveTerminalProvider,
 ): void {
 	let files: string[];
 	try {
@@ -157,7 +159,7 @@ function scanForNewJsonlFiles(
 				);
 			} else {
 				// No active agent → try to adopt the focused terminal
-				const activeTerminal = vscode.window.activeTerminal;
+				const activeTerminal = getActiveTerminal?.();
 				if (activeTerminal) {
 					let owned = false;
 					for (const agent of agents.values()) {
@@ -181,7 +183,7 @@ function scanForNewJsonlFiles(
 }
 
 function adoptTerminalForFile(
-	terminal: vscode.Terminal,
+	terminal: TerminalLike,
 	jsonlFile: string,
 	projectDir: string,
 	nextAgentIdRef: { current: number },
@@ -191,7 +193,7 @@ function adoptTerminalForFile(
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 	persistAgents: () => void,
 ): void {
 	const id = nextAgentIdRef.current++;
@@ -231,7 +233,7 @@ export function reassignAgentToFile(
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 	persistAgents: () => void,
 ): void {
 	const agent = agents.get(agentId);

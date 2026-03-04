@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { AgentState } from './types.js';
+import type { TerminalFactory } from './agentManager.js';
 import {
 	launchNewTerminal,
 	removeAgent,
@@ -14,7 +15,7 @@ import {
 } from './agentManager.js';
 import { ensureProjectScan } from './fileWatcher.js';
 import { loadFurnitureAssets, sendAssetsToWebview, loadFloorTiles, sendFloorTilesToWebview, loadWallTiles, sendWallTilesToWebview, loadCharacterSprites, sendCharacterSpritesToWebview, loadDefaultLayout } from './assetLoader.js';
-import { WORKSPACE_KEY_AGENT_SEATS, GLOBAL_KEY_SOUND_ENABLED } from './constants.js';
+import { WORKSPACE_KEY_AGENT_SEATS, GLOBAL_KEY_SOUND_ENABLED, TERMINAL_NAME_PREFIX } from './constants.js';
 import { writeLayoutToFile, readLayoutFromFile, watchLayoutFile } from './layoutPersistence.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 
@@ -56,6 +57,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 		persistAgents(this.agents, this.context);
 	};
 
+	private createVscodeTerminalFactory(): TerminalFactory {
+		return (name: string, cwd: string | undefined) => {
+			const terminal = vscode.window.createTerminal({ name, cwd });
+			terminal.show();
+			const sessionId = crypto.randomUUID();
+			terminal.sendText(`claude --session-id ${sessionId}`);
+			return { terminal, sessionId };
+		};
+	}
+
 	resolveWebviewView(webviewView: vscode.WebviewView) {
 		this.webviewView = webviewView;
 		webviewView.webview.options = { enableScripts: true };
@@ -63,13 +74,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
 		webviewView.webview.onDidReceiveMessage(async (message) => {
 			if (message.type === 'openClaude') {
+				const folders = vscode.workspace.workspaceFolders;
+				const cwd = (message.folderPath as string | undefined) || folders?.[0]?.uri.fsPath;
+				const isMultiRoot = !!(folders && folders.length > 1);
 				await launchNewTerminal(
 					this.nextAgentId, this.nextTerminalIndex,
 					this.agents, this.activeAgentId, this.knownJsonlFiles,
 					this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
 					this.jsonlPollTimers, this.projectScanTimer,
 					this.webview, this.persistAgents,
-					message.folderPath as string | undefined,
+					this.createVscodeTerminalFactory(),
+					cwd,
+					isMultiRoot,
 				);
 			} else if (message.type === 'focusAgent') {
 				const agent = this.agents.get(message.id);
@@ -98,6 +114,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 					this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
 					this.jsonlPollTimers, this.projectScanTimer, this.activeAgentId,
 					this.webview, this.persistAgents,
+					vscode.window.terminals,
 				);
 				// Send persisted settings to webview
 				const soundEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_SOUND_ENABLED, true);
@@ -113,8 +130,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				}
 
 				// Ensure project scan runs even with no restored agents (to adopt external terminals)
-				const projectDir = getProjectDirPath();
 				const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				const projectDir = getProjectDirPath(workspaceRoot);
 				console.log('[Extension] workspaceRoot:', workspaceRoot);
 				console.log('[Extension] projectDir:', projectDir);
 				if (projectDir) {
@@ -123,6 +140,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 						this.nextAgentId, this.agents,
 						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
 						this.webview, this.persistAgents,
+						() => vscode.window.activeTerminal as import('./interfaces.js').TerminalLike | undefined,
 					);
 
 					// Load furniture assets BEFORE sending layout

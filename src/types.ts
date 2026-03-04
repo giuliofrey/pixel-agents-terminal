@@ -1,8 +1,8 @@
-import type * as vscode from 'vscode';
+import type { TerminalLike } from './interfaces.js';
 
 export interface AgentState {
 	id: number;
-	terminalRef: vscode.Terminal;
+	terminalRef: TerminalLike;
 	projectDir: string;
 	jsonlFile: string;
 	fileOffset: number;

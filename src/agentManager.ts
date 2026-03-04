@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as vscode from 'vscode';
+import type { MessageSender, TerminalLike, PersistenceContext } from './interfaces.js';
 import type { AgentState, PersistedAgent } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer } from './timerManager.js';
 import { startFileWatching, readNewLines, ensureProjectScan } from './fileWatcher.js';
@@ -9,13 +9,16 @@ import { JSONL_POLL_INTERVAL_MS, TERMINAL_NAME_PREFIX, WORKSPACE_KEY_AGENTS, WOR
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 
 export function getProjectDirPath(cwd?: string): string | null {
-	const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	const workspacePath = cwd;
 	if (!workspacePath) return null;
 	const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
 	const projectDir = path.join(os.homedir(), '.claude', 'projects', dirName);
 	console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName}`);
 	return projectDir;
 }
+
+/** Factory to create a terminal-like process */
+export type TerminalFactory = (name: string, cwd: string | undefined) => { terminal: TerminalLike; sessionId: string };
 
 export async function launchNewTerminal(
 	nextAgentIdRef: { current: number },
@@ -29,22 +32,16 @@ export async function launchNewTerminal(
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
 	jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
 	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 	persistAgents: () => void,
-	folderPath?: string,
+	terminalFactory: TerminalFactory,
+	cwd: string | undefined,
+	isMultiRoot?: boolean,
 ): Promise<void> {
-	const folders = vscode.workspace.workspaceFolders;
-	const cwd = folderPath || folders?.[0]?.uri.fsPath;
-	const isMultiRoot = !!(folders && folders.length > 1);
 	const idx = nextTerminalIndexRef.current++;
-	const terminal = vscode.window.createTerminal({
-		name: `${TERMINAL_NAME_PREFIX} #${idx}`,
-		cwd,
-	});
+	const name = `${TERMINAL_NAME_PREFIX} #${idx}`;
+	const { terminal, sessionId } = terminalFactory(name, cwd);
 	terminal.show();
-
-	const sessionId = crypto.randomUUID();
-	terminal.sendText(`claude --session-id ${sessionId}`);
 
 	const projectDir = getProjectDirPath(cwd);
 	if (!projectDir) {
@@ -141,7 +138,7 @@ export function removeAgent(
 
 export function persistAgents(
 	agents: Map<number, AgentState>,
-	context: vscode.ExtensionContext,
+	context: PersistenceContext,
 ): void {
 	const persisted: PersistedAgent[] = [];
 	for (const agent of agents.values()) {
@@ -157,7 +154,7 @@ export function persistAgents(
 }
 
 export function restoreAgents(
-	context: vscode.ExtensionContext,
+	context: PersistenceContext,
 	nextAgentIdRef: { current: number },
 	nextTerminalIndexRef: { current: number },
 	agents: Map<number, AgentState>,
@@ -169,13 +166,13 @@ export function restoreAgents(
 	jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
 	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
 	activeAgentIdRef: { current: number | null },
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 	doPersist: () => void,
+	liveTerminals: readonly TerminalLike[],
 ): void {
 	const persisted = context.workspaceState.get<PersistedAgent[]>(WORKSPACE_KEY_AGENTS, []);
-	if (persisted.length === 0) return;
+	if (!persisted || persisted.length === 0) return;
 
-	const liveTerminals = vscode.window.terminals;
 	let maxId = 0;
 	let maxIdx = 0;
 	let restoredProjectDir: string | null = null;
@@ -264,8 +261,8 @@ export function restoreAgents(
 
 export function sendExistingAgents(
 	agents: Map<number, AgentState>,
-	context: vscode.ExtensionContext,
-	webview: vscode.Webview | undefined,
+	context: PersistenceContext,
+	webview: MessageSender | undefined,
 ): void {
 	if (!webview) return;
 	const agentIds: number[] = [];
@@ -298,7 +295,7 @@ export function sendExistingAgents(
 
 export function sendCurrentAgentStatuses(
 	agents: Map<number, AgentState>,
-	webview: vscode.Webview | undefined,
+	webview: MessageSender | undefined,
 ): void {
 	if (!webview) return;
 	for (const [agentId, agent] of agents) {
@@ -323,8 +320,8 @@ export function sendCurrentAgentStatuses(
 }
 
 export function sendLayout(
-	context: vscode.ExtensionContext,
-	webview: vscode.Webview | undefined,
+	context: PersistenceContext,
+	webview: MessageSender | undefined,
 	defaultLayout?: Record<string, unknown> | null,
 ): void {
 	if (!webview) return;
