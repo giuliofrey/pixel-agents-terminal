@@ -4,6 +4,7 @@ const path = require("path");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+const standaloneOnly = process.argv.includes('--standalone');
 
 /**
  * Copy assets folder to dist/assets
@@ -47,9 +48,37 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-	const ctx = await esbuild.context({
+	// Build VS Code extension (skip if standalone-only)
+	if (!standaloneOnly) {
+		const ctx = await esbuild.context({
+			entryPoints: [
+				'src/extension.ts'
+			],
+			bundle: true,
+			format: 'cjs',
+			minify: production,
+			sourcemap: !production,
+			sourcesContent: false,
+			platform: 'node',
+			outfile: 'dist/extension.js',
+			external: ['vscode'],
+			logLevel: 'silent',
+			plugins: [
+				esbuildProblemMatcherPlugin,
+			],
+		});
+		if (watch) {
+			await ctx.watch();
+		} else {
+			await ctx.rebuild();
+			await ctx.dispose();
+		}
+	}
+
+	// Build standalone server
+	const standaloneCtx = await esbuild.context({
 		entryPoints: [
-			'src/extension.ts'
+			'src/standalone/cli.ts'
 		],
 		bundle: true,
 		format: 'cjs',
@@ -57,19 +86,24 @@ async function main() {
 		sourcemap: !production,
 		sourcesContent: false,
 		platform: 'node',
-		outfile: 'dist/extension.js',
-		external: ['vscode'],
+		outfile: 'dist/standalone.js',
+		external: [],
+		banner: {
+			js: '#!/usr/bin/env node',
+		},
 		logLevel: 'silent',
 		plugins: [
-			/* add to the end of plugins array */
 			esbuildProblemMatcherPlugin,
 		],
 	});
 	if (watch) {
-		await ctx.watch();
+		await standaloneCtx.watch();
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await standaloneCtx.rebuild();
+		await standaloneCtx.dispose();
+	}
+
+	if (!watch) {
 		// Copy assets after build
 		copyAssets();
 	}
